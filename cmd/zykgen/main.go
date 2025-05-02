@@ -1,12 +1,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
 	"sync"
 
-	docopt "github.com/docopt/docopt.go"
 	"github.com/szampardi/zykgen"
 )
 
@@ -16,100 +16,113 @@ func replaceAtIndex(in string, r rune, i int) string {
 	return string(out)
 }
 
-const usage = `Zyxel VMG8823-B50B WPA Keygen
- 
-Usage:
-  zykgen (-m|-n|-c) [-b 375000] [-l <length> -L <letter>] <startserial> <endserial>
-  zykgen -h | --help
- 
-Options:
-  -b <batch>      Batch size [default 375000].
-  -l <length>     Output key length [default: 10].
-  -L <letter>     Fifth letter of the serial [default: V].
-  -h --help       Show this screen.`
+func checkLength(in string, l int) error {
+	if len(in) != l {
+		return fmt.Errorf("invalid serial number [%s], should be 12 chars long (exluding the first char which is 'S'), should contain only numbers, given letter is automatically inserted at 5th position", in)
+	}
+	return nil
+}
+
+type config struct {
+	Letter       *string `docopt:"-L"`
+	Length       *int    `docopt:"-l"`
+	Mojito       *bool   `docopt:"-m"`
+	Negroni      *bool   `docopt:"-n"`
+	Cosmopolitan *bool   `docopt:"-c"`
+	BatchSize    *int    `docopt:"-b"`
+
+	cocktail zykgen.Cocktail
+}
+
+var cfg *config
+
+func init() {
+	cfg = &config{
+		Letter:       flag.String("L", "V", "fifth letter of the serial"),
+		Length:       flag.Int("l", 10, "output key length"),
+		Mojito:       flag.Bool("m", false, "algorithm"),
+		Negroni:      flag.Bool("n", false, "algorithm"),
+		Cosmopolitan: flag.Bool("c", true, "algorithm"),
+		BatchSize:    flag.Int("b", 375000, "batch size"),
+	}
+	flag.Parse()
+	if *cfg.Mojito {
+		cfg.cocktail = zykgen.Mojito
+	} else if *cfg.Negroni {
+		cfg.cocktail = zykgen.Negroni
+	} else {
+		cfg.cocktail = zykgen.Cosmopolitan
+	}
+}
 
 func main() {
-	var cocktail zykgen.Cocktail
-	var seriale string
-
-	var args struct {
-		Sserial string `docopt:"<startserial>"`
-		Eserial string `docopt:"<endserial>"`
-
-		Letter       string `docopt:"-L"`
-		Length       int    `docopt:"-l"`
-		Mojito       bool   `docopt:"-m"`
-		Negroni      bool   `docopt:"-n"`
-		Cosmopolitan bool   `docopt:"-c"`
-
-		BatchSize int `docopt:"-b"`
+	var err error
+	var start, end int
+	args := flag.Args()
+	switch len(args) {
+	case 0:
+		flag.Usage()
+		os.Exit(127)
+	case 1:
+		if err = checkLength(args[0], 12); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(127)
+		}
+		start, err = strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+		}
+		end = start
+	case 2:
+		if err := checkLength(args[0], 12); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(127)
+		}
+		start, err = strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+		}
+		if err := checkLength(args[1], 12); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(127)
+		}
+		end, err = strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+		}
+		if start > end {
+			fmt.Fprintf(os.Stderr, "end serial should be at least > start")
+			os.Exit(128)
+		}
+	default:
+		flag.Usage()
+		os.Exit(127)
 	}
 
-	opts, err := docopt.DefaultParser.ParseArgs(usage, os.Args[1:], "")
-	if err != nil {
-		return
+	tot := int64(end-start) + 1
+	if tot == 0 {
+		serial := fmt.Sprintf("%12d", start)
+		serial = "S" + replaceAtIndex(serial, []rune(*cfg.Letter)[0], 3)
+		fmt.Fprintf(os.Stdout, "%s\n", zykgen.Wpa(serial, *cfg.Length, cfg.cocktail))
+		os.Exit(0)
 	}
 
-	opts.Bind(&args)
-	if args.Mojito {
-		cocktail = zykgen.Mojito
-	}
-	if args.Negroni {
-		cocktail = zykgen.Negroni
-	}
-	if args.Cosmopolitan {
-		cocktail = zykgen.Cosmopolitan
-	}
-
-	start, err := strconv.Atoi(args.Sserial)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		fmt.Fprintf(os.Stderr, "Serial number should be 12 chars long, (exluding the first char which is 'S'),should contain only numbers, letter 'V' is automatically added")
-		return
-	}
-
-	end, err := strconv.Atoi(args.Eserial)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		fmt.Fprintf(os.Stderr, "Serial number should be 12 chars long, (exluding the first char which is 'S'),should contain only numbers, letter 'V' is automatically added")
-		return
-	}
-
-	if start > end {
-		fmt.Fprintf(os.Stderr, "End of the serial should be at least > start of the serial")
-		return
-	}
-
-	if args.BatchSize == 0 {
-		args.BatchSize = 375000
-	}
-
-	tot := int64(end - start)
 	bar := Bar{}
 	bar.NewOption(0, tot)
 	progress := int64(0)
 
-	if len(args.Sserial) != 12 {
-		fmt.Fprintf(os.Stderr, "Serial number should be 12 chars long, (exluding the first char which is 'S'),should contain only numbers, letter 'V' is automatically added ")
-		return
-	}
-
-	if len(args.Eserial) != 12 {
-		fmt.Fprintf(os.Stderr, "Serial number should be 12 chars long, (exluding the first char which is 'S'),should contain only numbers, letter 'V' is automatically added  ")
-		return
-	}
-
 	wg := &sync.WaitGroup{}
-	for i := start; i < end; i++ {
+	for i := start - 1; i < end; {
+		i++
 		wg.Add(1)
 		progress++
 		go func() {
-			seriale = fmt.Sprintf("%12d", i)
-			seriale = "S" + replaceAtIndex(seriale, []rune(args.Letter)[0], 3)
-			fmt.Fprintf(os.Stdout, "%s\n", zykgen.Wpa(seriale, args.Length, cocktail))
+			serial := fmt.Sprintf("%12d", i)
+			serial = "S" + replaceAtIndex(serial, []rune(*cfg.Letter)[0], 3)
+			fmt.Fprintf(os.Stdout, "%s\n", zykgen.Wpa(serial, *cfg.Length, cfg.cocktail))
 			wg.Done()
 		}()
-		if i%args.BatchSize == 0 {
+		if i%*cfg.BatchSize == 0 {
 			wg.Wait()
 			bar.Play(progress)
 		}
