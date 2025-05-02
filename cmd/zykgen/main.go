@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -46,7 +47,7 @@ func init() {
 		Mojito:       flag.Bool("m", false, "algorithm"),
 		Negroni:      flag.Bool("n", false, "algorithm"),
 		Cosmopolitan: flag.Bool("c", true, "algorithm"),
-		BatchSize:    flag.Int64("b", 375000, "batch size"),
+		BatchSize:    flag.Int64("b", int64(runtime.NumCPU()*25000), "batch size"),
 	}
 	flag.Parse()
 	if *cfg.Mojito {
