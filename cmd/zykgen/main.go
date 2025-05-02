@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/szampardi/zykgen"
 )
@@ -24,13 +25,15 @@ func checkLength(in string, l int) error {
 }
 
 type config struct {
-	Letter       *string `docopt:"-L"`
-	Length       *int    `docopt:"-l"`
-	Mojito       *bool   `docopt:"-m"`
-	Negroni      *bool   `docopt:"-n"`
-	Cosmopolitan *bool   `docopt:"-c"`
-	BatchSize    *int    `docopt:"-b"`
+	Letter       *string
+	Length       *int
+	Mojito       *bool
+	Negroni      *bool
+	Cosmopolitan *bool
+	BatchSize    *int
 
+	start    int
+	end      int
 	cocktail zykgen.Cocktail
 }
 
@@ -53,11 +56,7 @@ func init() {
 	} else {
 		cfg.cocktail = zykgen.Cosmopolitan
 	}
-}
-
-func main() {
 	var err error
-	var start, end int
 	args := flag.Args()
 	switch len(args) {
 	case 0:
@@ -68,17 +67,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			os.Exit(127)
 		}
-		start, err = strconv.Atoi(args[0])
+		cfg.start, err = strconv.Atoi(args[0])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 		}
-		end = start
+		cfg.end = cfg.start
 	case 2:
 		if err := checkLength(args[0], 12); err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			os.Exit(127)
 		}
-		start, err = strconv.Atoi(args[0])
+		cfg.start, err = strconv.Atoi(args[0])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 		}
@@ -86,11 +85,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			os.Exit(127)
 		}
-		end, err = strconv.Atoi(args[1])
+		cfg.end, err = strconv.Atoi(args[1])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 		}
-		if start > end {
+		if cfg.start > cfg.end {
 			fmt.Fprintf(os.Stderr, "end serial should be at least > start")
 			os.Exit(128)
 		}
@@ -98,75 +97,54 @@ func main() {
 		flag.Usage()
 		os.Exit(127)
 	}
+}
 
-	tot := int64(end-start) + 1
-	if tot == 0 {
-		serial := fmt.Sprintf("%12d", start)
+func main() {
+	now := time.Now()
+	tot := int64(cfg.end-cfg.start) + 1
+	switch {
+	case tot == 1:
+		serial := fmt.Sprintf("%12d", cfg.start)
 		serial = "S" + replaceAtIndex(serial, []rune(*cfg.Letter)[0], 3)
 		fmt.Fprintf(os.Stdout, "%s\n", zykgen.Wpa(serial, *cfg.Length, cfg.cocktail))
 		os.Exit(0)
-	}
-
-	bar := Bar{}
-	bar.NewOption(0, tot)
-	progress := int64(0)
-
-	wg := &sync.WaitGroup{}
-	for i := start - 1; i < end; {
-		i++
-		wg.Add(1)
-		progress++
-		go func() {
-			serial := fmt.Sprintf("%12d", i)
-			serial = "S" + replaceAtIndex(serial, []rune(*cfg.Letter)[0], 3)
-			fmt.Fprintf(os.Stdout, "%s\n", zykgen.Wpa(serial, *cfg.Length, cfg.cocktail))
-			wg.Done()
-		}()
-		if i%*cfg.BatchSize == 0 {
-			wg.Wait()
-			bar.Play(progress)
+	case tot < int64(*cfg.BatchSize):
+		wg := &sync.WaitGroup{}
+		for i := cfg.start - 1; i < cfg.end; {
+			i++
+			wg.Add(1)
+			go func() {
+				serial := fmt.Sprintf("%12d", i)
+				serial = "S" + replaceAtIndex(serial, []rune(*cfg.Letter)[0], 3)
+				fmt.Fprintf(os.Stdout, "%s\n", zykgen.Wpa(serial, *cfg.Length, cfg.cocktail))
+				wg.Done()
+			}()
 		}
+		wg.Wait()
+	default:
+		bar := Bar{}
+		bar.NewOption(0, tot)
+		progress := int64(0)
+
+		wg := &sync.WaitGroup{}
+		for i := cfg.start - 1; i < cfg.end; {
+			i++
+			wg.Add(1)
+			progress++
+			go func() {
+				serial := fmt.Sprintf("%12d", i)
+				serial = "S" + replaceAtIndex(serial, []rune(*cfg.Letter)[0], 3)
+				fmt.Fprintf(os.Stdout, "%s\n", zykgen.Wpa(serial, *cfg.Length, cfg.cocktail))
+				wg.Done()
+			}()
+			if i%*cfg.BatchSize == 0 {
+				wg.Wait()
+				bar.Play(progress)
+			}
+		}
+		wg.Wait()
+		bar.Play(progress)
+		bar.Finish()
 	}
-	wg.Wait()
-	bar.Play(progress)
-	bar.Finish()
-}
-
-// Bar ...
-type Bar struct {
-	percent int64  // progress percentage
-	cur     int64  // current progress
-	total   int64  // total value for progress
-	rate    string // the actual progress bar to be printed
-	graph   string // the fill value for progress bar
-}
-
-func (bar *Bar) NewOption(start, total int64) {
-	bar.cur = start
-	bar.total = total
-	if bar.graph == "" {
-		bar.graph = ">"
-	}
-	bar.percent = bar.getPercent()
-	for i := 0; i < int(bar.percent); i += 2 {
-		bar.rate += bar.graph // initial progress position
-	}
-}
-
-func (bar *Bar) getPercent() int64 {
-	return int64((float32(bar.cur) / float32(bar.total)) * 100)
-}
-
-func (bar *Bar) Play(cur int64) {
-	bar.cur = cur
-	last := bar.percent
-	bar.percent = bar.getPercent()
-	if bar.percent != last && bar.percent%2 == 0 {
-		bar.rate += bar.graph
-	}
-	fmt.Fprintf(os.Stderr, "\r[%-50s]%3d%% %8d/%d", bar.rate, bar.percent, bar.cur, bar.total)
-}
-
-func (bar *Bar) Finish() {
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "computed %d keys in %s\n", tot, time.Since(now).String())
 }
