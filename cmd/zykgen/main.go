@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -28,23 +30,40 @@ func checkLength(in string, l int) error {
 }
 
 type config struct {
-	Letter       *string
-	Length       *int
+	Letter *string
+	Length *int
+
 	Mojito       *bool
 	Negroni      *bool
 	Cosmopolitan *bool
+	cocktail     zykgen.Cocktail
 
 	BatchSize *int64
 	Output    *string
 	Gzip      *bool
 }
 
+func (c *config) serialize() string {
+	b := new(bytes.Buffer)
+	if err := json.NewEncoder(b).Encode(c); err != nil {
+		panic(err)
+	}
+	return b.String()
+}
+
+func (c *config) filename(start, end int64) string {
+	if end == 0 || end == start {
+		return fmt.Sprintf("zykgen_%d_l%d_S%s.txt", c.cocktail, *c.Length, replaceAtIndex(fmt.Sprintf("%12d", start), []rune(*c.Letter)[0], 3))
+	}
+	return fmt.Sprintf("zykgen_%d_l%d_S%s-S%s.txt", c.cocktail, *c.Length, replaceAtIndex(fmt.Sprintf("%12d", start), []rune(*c.Letter)[0], 3), replaceAtIndex(fmt.Sprintf("%12d", end), []rune(*c.Letter)[0], 3))
+}
+
 var (
-	cfg      *config
-	outfile  *os.File = os.Stdout
-	cocktail zykgen.Cocktail
-	start    int64
-	end      int64
+	cfg     *config
+	outfile *os.File = os.Stdout
+
+	start int64
+	end   int64
 )
 
 func init() {
@@ -61,11 +80,11 @@ func init() {
 	}
 	flag.Parse()
 	if *cfg.Mojito {
-		cocktail = zykgen.Mojito
+		cfg.cocktail = zykgen.Mojito
 	} else if *cfg.Negroni {
-		cocktail = zykgen.Negroni
+		cfg.cocktail = zykgen.Negroni
 	} else {
-		cocktail = zykgen.Cosmopolitan
+		cfg.cocktail = zykgen.Cosmopolitan
 	}
 	var err error
 	args := flag.Args()
@@ -113,10 +132,13 @@ func init() {
 func main() {
 	var err error
 	var writeTo io.Writer
+	fname := cfg.filename(start, end)
 	switch *cfg.Output {
 	case "", "-", os.Stdout.Name():
 		if *cfg.Gzip {
 			gzw, _ := gzip.NewWriterLevel(outfile, gzip.BestCompression)
+			gzw.Comment = cfg.serialize()
+			gzw.Name = fname
 			defer func() {
 				if err = gzw.Flush(); err != nil {
 					panic(err)
@@ -130,12 +152,20 @@ func main() {
 			writeTo = os.Stdout
 		}
 	default:
+		if *cfg.Output == "auto" {
+			*cfg.Output = fname
+			if *cfg.Gzip {
+				*cfg.Output += ".gz"
+			}
+		}
 		outfile, err = os.OpenFile(*cfg.Output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
 			panic(err)
 		}
 		if *cfg.Gzip {
 			gzw, _ := gzip.NewWriterLevel(outfile, gzip.BestCompression)
+			gzw.Comment = cfg.serialize()
+			gzw.Name = fname
 			defer func() {
 				if err = gzw.Flush(); err != nil {
 					panic(err)
@@ -163,7 +193,7 @@ func main() {
 	case tot == 1:
 		serial := fmt.Sprintf("%12d", start)
 		serial = "S" + replaceAtIndex(serial, []rune(*cfg.Letter)[0], 3)
-		fmt.Fprintf(writeTo, "%s\n", zykgen.Wpa(serial, *cfg.Length, cocktail))
+		fmt.Fprintf(writeTo, "%s\n", zykgen.Wpa(serial, *cfg.Length, cfg.cocktail))
 		os.Exit(0)
 	case tot < int64(*cfg.BatchSize):
 		wg := &sync.WaitGroup{}
@@ -173,7 +203,7 @@ func main() {
 			wg.Add(1)
 			go func() {
 				serial := "S" + replaceAtIndex(fmt.Sprintf("%12d", i), []rune(*cfg.Letter)[0], 3)
-				key := zykgen.Wpa(serial, *cfg.Length, cocktail)
+				key := zykgen.Wpa(serial, *cfg.Length, cfg.cocktail)
 				mu.Lock()
 				fmt.Fprintf(writeTo, "%s\n", key)
 				mu.Unlock()
@@ -193,7 +223,7 @@ func main() {
 			progress++
 			go func() {
 				serial := "S" + replaceAtIndex(fmt.Sprintf("%12d", i), []rune(*cfg.Letter)[0], 3)
-				key := zykgen.Wpa(serial, *cfg.Length, cocktail)
+				key := zykgen.Wpa(serial, *cfg.Length, cfg.cocktail)
 				mu.Lock()
 				fmt.Fprintf(writeTo, "%s\n", key)
 				mu.Unlock()
