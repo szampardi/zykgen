@@ -30,10 +30,10 @@ type config struct {
 	Mojito       *bool
 	Negroni      *bool
 	Cosmopolitan *bool
-	BatchSize    *int
+	BatchSize    *int64
 
-	start    int
-	end      int
+	start    int64
+	end      int64
 	cocktail zykgen.Cocktail
 }
 
@@ -46,7 +46,7 @@ func init() {
 		Mojito:       flag.Bool("m", false, "algorithm"),
 		Negroni:      flag.Bool("n", false, "algorithm"),
 		Cosmopolitan: flag.Bool("c", true, "algorithm"),
-		BatchSize:    flag.Int("b", 375000, "batch size"),
+		BatchSize:    flag.Int64("b", 375000, "batch size"),
 	}
 	flag.Parse()
 	if *cfg.Mojito {
@@ -67,7 +67,7 @@ func init() {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			os.Exit(127)
 		}
-		cfg.start, err = strconv.Atoi(args[0])
+		cfg.start, err = strconv.ParseInt(args[0], 10, 64)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 		}
@@ -77,7 +77,7 @@ func init() {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			os.Exit(127)
 		}
-		cfg.start, err = strconv.Atoi(args[0])
+		cfg.start, err = strconv.ParseInt(args[0], 10, 64)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 		}
@@ -85,7 +85,7 @@ func init() {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			os.Exit(127)
 		}
-		cfg.end, err = strconv.Atoi(args[1])
+		cfg.end, err = strconv.ParseInt(args[1], 10, 64)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 		}
